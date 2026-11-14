@@ -28,6 +28,8 @@ impl Ssh {
             "LogLevel=ERROR",
             "-o",
             "ServerAliveInterval=30",
+            "-o",
+            "ConnectTimeout=20",
         ]);
         c.arg("-o")
             .arg(format!("ControlPath={}/%C", self.control_dir.display()));
@@ -44,16 +46,7 @@ impl Ssh {
             let _ =
                 std::fs::set_permissions(&self.control_dir, std::fs::Permissions::from_mode(0o700));
         }
-        let alive = self
-            .common()
-            .args(["-O", "check"])
-            .args(&self.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if alive {
+        if self.master_alive() {
             return;
         }
         // All stdio must be detached or the persistent master keeps our pipes open forever.
@@ -76,6 +69,18 @@ impl Ssh {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+    }
+
+    /// True when a multiplexing master for this destination is already running (local, no network).
+    pub fn master_alive(&self) -> bool {
+        self.common()
+            .args(["-O", "check"])
+            .args(&self.args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
     }
 
     /// Command that runs `script` under `bash -lc` on the remote.

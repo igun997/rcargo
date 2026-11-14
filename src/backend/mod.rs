@@ -23,6 +23,8 @@ pub trait Backend {
     fn status(&self) -> Result<Status>;
     /// Pause / stop to save money. Idempotent.
     fn stop(&self) -> Result<()>;
+    /// Permanently delete the machine and forget local caches. Returns a human message.
+    fn destroy(&self) -> Result<String>;
 }
 
 pub fn ssh_cache_dir() -> PathBuf {

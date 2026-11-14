@@ -82,4 +82,12 @@ impl Backend for SshHost {
         self.ssh.close_master();
         Ok(())
     }
+
+    fn destroy(&self) -> Result<String> {
+        self.ssh.close_master();
+        anyhow::bail!(
+            "rcargo does not own ssh hosts, so it will not delete or power off yours. \
+             To free its disk use `rcargo remote gc --all --yes` (all workspaces) or `rcargo remote rm` (this project)"
+        )
+    }
 }

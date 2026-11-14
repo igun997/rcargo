@@ -221,6 +221,24 @@ pub fn instabox_missing() -> SetupRequired {
     }
 }
 
+pub fn instabox_key_rejected(code: u16) -> SetupRequired {
+    SetupRequired {
+        problem: format!("instabox rejected INSTABOX_API_KEY (HTTP {code}); it may be wrong, expired, revoked or missing a scope"),
+        choose_one: true,
+        steps: vec![
+            Step::new("Create a new API key and export it")
+                .run("export INSTABOX_API_KEY=ibk_...")
+                .human()
+                .note("create it in the instabox dashboard under API keys with machines:read, machines:write (and machines:delete if you want `rcargo remote destroy`)"),
+            Step::new("Or drop the key and use the CLI login instead")
+                .run("unset INSTABOX_API_KEY")
+                .run("instabox login")
+                .human(),
+        ],
+        then: Some("retry the original command".into()),
+    }
+}
+
 pub fn instabox_login() -> SetupRequired {
     SetupRequired {
         problem: "instabox is not signed in (or the API key is invalid/expired)".into(),
@@ -430,13 +448,21 @@ pub fn onboard(loaded: &Loaded, requested: Option<&str>, live: bool) -> Onboard 
 
     match inst.backend.as_str() {
         "instabox" => {
-            let present = crate::util::on_path("instabox");
-            push("instabox CLI installed", present, "");
-            if !present {
-                return Onboard {
-                    checks,
-                    blocker: Some(instabox_missing()),
-                };
+            if crate::backend::instabox::using_api_key() {
+                push(
+                    "INSTABOX_API_KEY set",
+                    true,
+                    "REST API, instabox CLI not needed",
+                );
+            } else {
+                let present = crate::util::on_path("instabox");
+                push("instabox CLI installed", present, "");
+                if !present {
+                    return Onboard {
+                        checks,
+                        blocker: Some(instabox_missing()),
+                    };
+                }
             }
         }
         "daytona" => {

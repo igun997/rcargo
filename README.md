@@ -5,7 +5,7 @@
 Rust compiles are heavy. On a laptop with 8 GB of RAM a single `cargo build` can freeze everything, and an AI coding agent will happily start one for you. `rcargo` runs `cargo` on a remote machine ([instabox](https://instabox.sh), [Daytona](https://daytona.io), or any server you can SSH into) and streams the result back. Your editor and your agent keep working; the fan stays quiet.
 
 - **Your code never goes through GitHub.** The working tree, including uncommitted and private code and `path = "../x"` dependencies, is synced over SSH. Only changed files are sent.
-- **Fast after the first build.** The remote keeps `target/` between runs, so a one-line edit rebuilds in about a second (measured: 2.8 s wall clock end to end on a free instabox box).
+- **Fast after the first build.** The remote keeps `target/` between runs, so a one-line edit rebuilds almost instantly. Measured end to end on a free instabox box (4 vCPU): `rcargo test` with nothing changed 1.0 s, one-line edit plus run 1.3 s, cold first build with one dependency 9 s. A warm run makes zero provider calls and reuses one SSH connection; rcargo itself uses about 35 ms of CPU. The build speed itself is whatever the remote machine gives you.
 - **Made for AI agents.** An MCP server, an agent skill, compact output (errors first, progress noise removed) and a guard that stops an agent from compiling locally.
 - **You don't need Rust installed locally.** The first build on a fresh machine installs the toolchain there.
 - **Many machines.** Register several instances (a small default, a big one for release builds); agents are told which exist and what each is for.
@@ -26,7 +26,7 @@ Work through these steps in order. Whenever a step needs me (a browser login, an
    Make sure the install folder (usually ~/.local/bin) is on PATH for this session.
 2. Go to the folder that contains this project's Cargo.toml and run `rcargo init`. It creates rcargo.toml, installs the agent skill, registers the MCP server, makes rust-analyzer check remotely, and installs a guard that blocks local cargo builds.
 3. Run `rcargo onboard --live`. If it prints SETUP REQUIRED, follow its steps: run the steps that are not marked [USER] yourself, and for [USER] steps ask me. If no remote machine is configured, ask me which I want and recommend instabox (easiest, has a free tier):
-   - instabox: `npx instabox@latest` (signs in and installs its CLI), then `rcargo instances add main --backend instabox --default --description "general purpose Rust builder"`
+   - instabox: `npx instabox@latest` (signs in and installs its CLI), then `rcargo instances add main --backend instabox --default --description "general purpose Rust builder"`. If I prefer an API key (no CLI needed), I create one in the instabox dashboard and set INSTABOX_API_KEY.
    - Daytona: I run `daytona login` (or set DAYTONA_API_KEY), then `rcargo instances add dt --backend daytona --set cpu=4 --set memory=8 --set disk=10 --default --description "Daytona sandbox, 4 vCPU"` (Daytona's default sandbox is only 1 vCPU / 1 GB, too small for Rust; lower the numbers if my plan's quota is smaller)
    - my own server: `rcargo instances add vps --backend ssh --set host=USER@SERVER --default --description "my build server"` (key-based ssh must already work)
    If I already have several machines, run `rcargo instances discover`, and register each one with a description that says what it is good for (for example "32 cores, use for release builds").
@@ -96,9 +96,11 @@ Choice order: `-i` / `RCARGO_INSTANCE`, then `instance = "NAME"` in the project'
 
 | Backend | What it needs | Notes |
 |---|---|---|
-| `instabox` | the `instabox` CLI, signed in | box is created on first use (`--set box=NAME`, `vcpus`/`mem_mib` on paid plans). Free plan: one box, so all projects share it. Verified end to end. |
+| `instabox` | `INSTABOX_API_KEY` (REST API, **no CLI needed**) or the `instabox` CLI, signed in | box is created on first use (`--set box=NAME`, `vcpus`/`mem_mib` on paid plans). Free plan: one box, so all projects share it. Verified end to end in both modes (create, destroy, build, test). |
 | `daytona` | `daytona login` (rcargo reuses the CLI's stored login) or `DAYTONA_API_KEY`; `curl` | uses the REST API and Daytona's SSH gateway; the sandbox is created on first use and the Rust toolchain is installed automatically. Verified end to end (create, toolchain bootstrap, sync, test). |
 | `ssh` | key-based ssh to `host` | your own VPS or desktop. Linux with `bash`, `tar`, `find`, `flock`. |
+
+**Credential order.** If an API key is in the environment (`INSTABOX_API_KEY`, `DAYTONA_API_KEY`) rcargo uses it and talks to the provider's REST API directly, so the provider CLI does not even need to be installed. Otherwise it falls back to the CLI's stored login (`instabox login`, `daytona login`). For MCP clients, put the key in the rcargo server's `env` block, because clients do not inherit your shell. Keys are sent to `curl` on stdin, never on a command line.
 
 Daytona's default sandbox is 1 vCPU / 1 GB RAM / 3 GB disk, which is too small for most Rust builds. Size it when you register it (applies when the sandbox is created): `rcargo instances add dt --backend daytona --set cpu=4 --set memory=8 --set disk=10` (`memory` and `disk` are GB; stay within your plan's quota). instabox's default box is 4 vCPU / 8 GiB.
 
@@ -132,8 +134,22 @@ rcargo remote ls          # workspaces on the instance with disk usage
 rcargo remote gc --days 7 --yes
 rcargo remote shell       # shell in the remote workspace (or: rcargo remote shell -- ls target)
 rcargo remote down        # pause the instance to save money (it resumes automatically)
+rcargo remote destroy     # DELETE the machine itself (dry run; add --yes to do it)
 rcargo onboard --live     # what is still missing, and how to fix it
 ```
+
+### Cleaning up
+
+| What | Command |
+|---|---|
+| This project's `target/` only | `rcargo clean` (it is `cargo clean`, run remotely) |
+| This project's whole remote workspace | `rcargo remote rm` |
+| Old workspaces on the machine | `rcargo remote ls`, then `rcargo remote gc --days 14 --yes` (everything: `--all`) |
+| Pause the machine (stops billing, keeps files) | `rcargo remote down` |
+| Delete the machine and local caches | `rcargo remote destroy --yes` (instabox and Daytona only; SSH hosts are never deleted) |
+| Forget an instance in your config | `rcargo instances rm NAME` (does not touch the machine) |
+
+Deleting machines and workspaces is a CLI-only action; the MCP server and the agent skill have no delete tool, and agents are told to ask first.
 
 ## Limits (read these)
 

@@ -490,6 +490,20 @@ pub fn remote(instance: Option<&str>, action: RemoteCmd) -> Result<i32> {
             );
             Ok(0)
         }
+        RemoteCmd::Destroy { yes } => {
+            let (name, inst) = loaded.resolve(instance)?;
+            let b = backend::make(&name, &inst)?;
+            let st = b.status()?;
+            if !yes {
+                println!(
+                    "This would permanently DELETE the machine behind instance `{name}` ({}): {}\nIt removes every project workspace and target/ on it.\nRe-run with --yes to confirm. The instance stays in your config (`rcargo instances rm {name}` removes that).",
+                    inst.backend, st.detail
+                );
+                return Ok(0);
+            }
+            println!("{}", b.destroy()?);
+            Ok(0)
+        }
     }
 }
 
@@ -527,11 +541,22 @@ fn doctor(loaded: &Loaded, instance: Option<&str>, cwd: &Path) -> Result<i32> {
     );
     let (name, inst) = loaded.resolve(instance)?;
     match inst.backend.as_str() {
-        "instabox" => line(
-            util::on_path("instabox"),
-            "instabox CLI",
-            "npm install -g instabox && instabox login",
-        ),
+        "instabox" => {
+            if crate::backend::instabox::using_api_key() {
+                line(
+                    true,
+                    "INSTABOX_API_KEY set",
+                    "talking to the REST API directly; the instabox CLI is not needed",
+                );
+            } else {
+                line(
+                    util::on_path("instabox"),
+                    "instabox CLI",
+                    "npm install -g instabox && instabox login (or set INSTABOX_API_KEY)",
+                );
+            }
+            line(util::on_path("curl"), "curl", "");
+        }
         "daytona" => {
             line(
                 crate::backend::daytona::have_credentials(&inst),

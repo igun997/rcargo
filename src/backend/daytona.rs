@@ -232,6 +232,40 @@ impl Daytona {
         Ok(())
     }
 
+    fn cache_file(&self) -> std::path::PathBuf {
+        ssh_cache_dir().join(format!("daytona-{}.json", self.sb))
+    }
+
+    fn ssh_for(&self, token: &str, host: &str, port: u16) -> Ssh {
+        let known = ssh_cache_dir().join("daytona_known_hosts");
+        Ssh {
+            args: vec![
+                "-o".into(),
+                "StrictHostKeyChecking=accept-new".into(),
+                "-o".into(),
+                format!("UserKnownHostsFile={}", known.display()),
+                "-p".into(),
+                port.to_string(),
+                format!("{token}@{host}"),
+            ],
+            control_dir: control_dir(),
+        }
+    }
+
+    /// ssh handle from the locally cached token, if still valid. No network.
+    fn cached_ssh(&self) -> Option<Ssh> {
+        let v: Value =
+            serde_json::from_str(&std::fs::read_to_string(self.cache_file()).ok()?).ok()?;
+        if v["expires"].as_i64()? <= util::now_secs() + 600 {
+            return None;
+        }
+        Some(self.ssh_for(
+            v["token"].as_str()?,
+            v["host"].as_str()?,
+            v["port"].as_u64().unwrap_or(22) as u16,
+        ))
+    }
+
     fn token(&self) -> Result<(String, String, u16)> {
         let dir = ssh_cache_dir();
         std::fs::create_dir_all(&dir)?;
@@ -292,6 +326,13 @@ impl Daytona {
 
 impl Backend for Daytona {
     fn ensure(&self) -> Result<Ssh> {
+        // Fast path: cached token and a live connection => zero API calls.
+        if let Some(ssh) = self.cached_ssh() {
+            ssh.ensure_master();
+            if ssh.master_alive() {
+                return Ok(ssh);
+            }
+        }
         let mut v = match self.get()? {
             Some(v) => v,
             None => {
@@ -330,19 +371,7 @@ impl Backend for Daytona {
             v = self.get()?.context("sandbox disappeared")?;
         }
         let (token, host, port) = self.token()?;
-        let known = ssh_cache_dir().join("daytona_known_hosts");
-        Ok(Ssh {
-            args: vec![
-                "-o".into(),
-                "StrictHostKeyChecking=accept-new".into(),
-                "-o".into(),
-                format!("UserKnownHostsFile={}", known.display()),
-                "-p".into(),
-                port.to_string(),
-                format!("{token}@{host}"),
-            ],
-            control_dir: control_dir(),
-        })
+        Ok(self.ssh_for(&token, &host, port))
     }
 
     fn status(&self) -> Result<Status> {
@@ -383,6 +412,24 @@ impl Backend for Daytona {
             );
         }
         Ok(())
+    }
+
+    fn destroy(&self) -> Result<String> {
+        if self.get()?.is_none() {
+            return Ok(format!(
+                "sandbox `{}` does not exist (nothing to delete)",
+                self.sb
+            ));
+        }
+        let (c, r) = self.call("DELETE", &format!("/sandbox/{}", self.sb), None)?;
+        if !(200..300).contains(&c) {
+            bail!(
+                "daytona delete failed (HTTP {c}): {}",
+                r["message"].as_str().unwrap_or("")
+            );
+        }
+        let _ = std::fs::remove_file(self.cache_file());
+        Ok(format!("deleted Daytona sandbox `{}`", self.sb))
     }
 }
 

@@ -4,6 +4,7 @@ mod backend;
 mod cmds;
 mod config;
 mod guidance;
+mod http;
 mod init;
 mod mcp;
 mod project;
@@ -144,6 +145,11 @@ pub enum RemoteCmd {
     },
     /// Delete this project's remote workspace, including its target/.
     Rm,
+    /// Permanently delete the machine behind the instance (needs --yes). Local caches are cleaned too.
+    Destroy {
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() {

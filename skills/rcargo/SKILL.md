@@ -59,3 +59,4 @@ Typical first-time path for a new user (explain it simply, they may not know Rus
 - Private git dependencies or registries need a token on the remote: add the variable name to `forward_env` in `rcargo.toml` (`forward_env = ["GH_TOKEN"]`); rcargo copies it from the user's environment at run time and never writes it to disk.
 - `.cargo/config.toml` settings such as `linker` or `target-dir` also apply remotely; if the remote build fails on those, tell the user.
 - Disk full on the remote: `rcargo remote ls`, then `rcargo remote gc --days 7 --yes` (ask first) or `cargo clean` through the `cargo` tool.
+- **Never** run `rcargo remote destroy`, `rcargo remote rm` or `rcargo remote gc --all` on your own initiative: they delete the user's remote machine or work. Offer them and wait for an explicit yes.
