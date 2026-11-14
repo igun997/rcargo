@@ -9,11 +9,98 @@ use crate::config::Instance;
 use crate::transport::Ssh;
 use crate::util;
 
-/// Daytona via its REST API (`curl`, key passed on stdin so it never shows in `ps`) and its SSH gateway.
-/// Needs `DAYTONA_API_KEY`.
+/// Daytona via its REST API (`curl`, credential passed on stdin so it never shows in `ps`) and its SSH gateway.
+/// Credentials: `DAYTONA_API_KEY`, or the login the `daytona` CLI already stored (`daytona login`).
 pub struct Daytona {
     sb: String,
     inst: Instance,
+}
+
+struct Creds {
+    bearer: String,
+    org: Option<String>,
+    url: Option<String>,
+    /// Came from the daytona CLI's OAuth login (can be refreshed by running the CLI).
+    from_cli: bool,
+}
+
+fn cli_config_candidates() -> Vec<std::path::PathBuf> {
+    let home = util::home();
+    let mut v = vec![];
+    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|x| !x.is_empty()) {
+        v.push(std::path::PathBuf::from(x).join("daytona/config.json"));
+    }
+    v.push(home.join(".config/daytona/config.json"));
+    v.push(home.join("Library/Application Support/daytona/config.json"));
+    v
+}
+
+fn creds_from_profile(cfg: &Value, org: Option<String>, url: Option<String>) -> Option<Creds> {
+    let active = cfg["activeProfile"].as_str();
+    let profiles = cfg["profiles"].as_array()?;
+    let p = profiles
+        .iter()
+        .find(|p| active.is_some() && p["id"].as_str() == active)
+        .or_else(|| profiles.first())?;
+    let api = &p["api"];
+    let key = api["key"].as_str().filter(|k| !k.is_empty());
+    let token = api["token"]["accessToken"]
+        .as_str()
+        .filter(|k| !k.is_empty());
+    let (bearer, from_cli) = match (key, token) {
+        (Some(k), _) => (k, false),
+        (None, Some(t)) => (t, true),
+        _ => return None,
+    };
+    Some(Creds {
+        bearer: bearer.to_string(),
+        org: org.or_else(|| p["activeOrganizationId"].as_str().map(str::to_string)),
+        url: url.or_else(|| api["url"].as_str().map(str::to_string)),
+        from_cli,
+    })
+}
+
+fn credentials(inst: &Instance) -> Result<Creds> {
+    let org = std::env::var("DAYTONA_ORGANIZATION_ID")
+        .ok()
+        .or_else(|| inst.organization_id.clone());
+    let url = std::env::var("DAYTONA_API_URL")
+        .ok()
+        .or_else(|| inst.api_url.clone());
+    if let Ok(k) = std::env::var("DAYTONA_API_KEY") {
+        return Ok(Creds {
+            bearer: k,
+            org,
+            url,
+            from_cli: false,
+        });
+    }
+    for p in cli_config_candidates() {
+        if let Some(cfg) = std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        {
+            if let Some(c) = creds_from_profile(&cfg, org.clone(), url.clone()) {
+                return Ok(c);
+            }
+        }
+    }
+    Err(crate::guidance::daytona_key_missing().into_err())
+}
+
+/// True when rcargo can authenticate to Daytona (env key or an existing `daytona login`).
+pub fn have_credentials(inst: &Instance) -> bool {
+    credentials(inst).is_ok()
+}
+
+/// Any daytona CLI call that hits the API makes it refresh its stored access token.
+fn refresh_cli_login() {
+    let _ = Command::new("daytona")
+        .args(["organization", "list"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 impl Daytona {
@@ -24,23 +111,37 @@ impl Daytona {
         }
     }
 
-    fn api_url(&self) -> String {
-        std::env::var("DAYTONA_API_URL")
-            .ok()
-            .or_else(|| self.inst.api_url.clone())
+    fn api_url(&self, c: &Creds) -> String {
+        c.url
+            .clone()
             .unwrap_or_else(|| "https://app.daytona.io/api".into())
             .trim_end_matches('/')
             .to_string()
     }
 
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value)> {
-        let key = std::env::var("DAYTONA_API_KEY")
-            .map_err(|_| crate::guidance::daytona_key_missing().into_err())?;
-        let mut cfg = format!("header = \"Authorization: Bearer {key}\"\nheader = \"Content-Type: application/json\"\n");
-        let org = std::env::var("DAYTONA_ORGANIZATION_ID")
-            .ok()
-            .or_else(|| self.inst.organization_id.clone());
-        if let Some(o) = org {
+        let mut creds = credentials(&self.inst)?;
+        let mut r = self.call_with(&creds, method, path, body)?;
+        if r.0 == 401 && creds.from_cli {
+            refresh_cli_login();
+            creds = credentials(&self.inst)?;
+            r = self.call_with(&creds, method, path, body)?;
+        }
+        Ok(r)
+    }
+
+    fn call_with(
+        &self,
+        creds: &Creds,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<(u16, Value)> {
+        let mut cfg = format!(
+            "header = \"Authorization: Bearer {}\"\nheader = \"Content-Type: application/json\"\n",
+            creds.bearer
+        );
+        if let Some(o) = &creds.org {
             cfg += &format!("header = \"X-Daytona-Organization-ID: {o}\"\n");
         }
         let mut cmd = Command::new("curl");
@@ -61,7 +162,7 @@ impl Daytona {
                 &body.map(|b| b.to_string()).unwrap_or_default(),
             ]);
         }
-        cmd.arg(format!("{}{}", self.api_url(), path));
+        cmd.arg(format!("{}{}", self.api_url(creds), path));
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -313,4 +414,50 @@ pub fn list_sandboxes() -> Result<Vec<(String, String)>> {
             )
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reuses_cli_oauth_login() {
+        let cfg = serde_json::json!({
+            "activeProfile": "p2",
+            "profiles": [
+                {"id": "p1", "api": {"url": "https://one/api", "key": null, "token": {"accessToken": "tok1"}}, "activeOrganizationId": "o1"},
+                {"id": "p2", "api": {"url": "https://two/api", "key": null, "token": {"accessToken": "tok2"}}, "activeOrganizationId": "o2"}
+            ]
+        });
+        let c = creds_from_profile(&cfg, None, None).unwrap();
+        assert_eq!(
+            (
+                c.bearer.as_str(),
+                c.org.as_deref(),
+                c.url.as_deref(),
+                c.from_cli
+            ),
+            ("tok2", Some("o2"), Some("https://two/api"), true)
+        );
+        // explicit overrides win
+        let c = creds_from_profile(&cfg, Some("mine".into()), Some("https://x".into())).unwrap();
+        assert_eq!(
+            (c.org.as_deref(), c.url.as_deref()),
+            (Some("mine"), Some("https://x"))
+        );
+    }
+
+    #[test]
+    fn api_key_in_profile_beats_token_and_is_not_refreshable() {
+        let cfg = serde_json::json!({"profiles": [{"id": "a", "api": {"key": "k", "token": {"accessToken": "t"}}}]});
+        let c = creds_from_profile(&cfg, None, None).unwrap();
+        assert_eq!((c.bearer.as_str(), c.from_cli), ("k", false));
+        assert!(creds_from_profile(&serde_json::json!({"profiles": []}), None, None).is_none());
+        assert!(creds_from_profile(
+            &serde_json::json!({"profiles": [{"api": {"key": null}}]}),
+            None,
+            None
+        )
+        .is_none());
+    }
 }

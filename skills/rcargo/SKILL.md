@@ -45,7 +45,7 @@ If rcargo (CLI exit code 3, or an MCP result with `isError` and `structuredConte
 Typical first-time path for a new user (explain it simply, they may not know Rust or servers):
 
 - No instance yet, simplest: `npx instabox@latest` (signs in and installs the instabox CLI; a free tier exists), then `rcargo instances add main --backend instabox --default --description "general purpose builder"`. Headless agents: `instabox login --agent --name rcargo` prints a claim page and code; relay both to the user and wait.
-- Daytona: the user sets `DAYTONA_API_KEY` (key from the Daytona dashboard). For MCP the key must be in the rcargo server's `env` block of the client config, because clients do not inherit the interactive shell.
+- Daytona: the user runs `daytona login` once (rcargo reuses the CLI's stored login and refreshes it), or sets `DAYTONA_API_KEY`. For MCP an API key must be in the rcargo server's `env` block of the client config, because clients do not inherit the interactive shell. The sandbox is created on first use.
 - Own server: `rcargo instances add vps --backend ssh --set host=user@server`; key-based SSH must already work.
 - The first build on a fresh machine installs the Rust toolchain automatically (a few minutes, once).
 - One-command project setup for humans: `rcargo init` (writes `rcargo.toml`, this skill, the MCP registration, a rust-analyzer override and a guard that blocks local `cargo build` in Claude Code).

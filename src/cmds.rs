@@ -255,7 +255,7 @@ pub fn instances(action: InstancesCmd) -> Result<i32> {
                 }
                 Err(e) => println!("instabox: {e:#}"),
             }
-            if std::env::var_os("DAYTONA_API_KEY").is_some() {
+            if crate::backend::daytona::have_credentials(&Default::default()) {
                 let known: Vec<String> = loaded
                     .cfg
                     .instances
@@ -534,8 +534,8 @@ fn doctor(loaded: &Loaded, instance: Option<&str>, cwd: &Path) -> Result<i32> {
         ),
         "daytona" => {
             line(
-                std::env::var_os("DAYTONA_API_KEY").is_some(),
-                "DAYTONA_API_KEY set",
+                crate::backend::daytona::have_credentials(&inst),
+                "Daytona login (`daytona login`) or DAYTONA_API_KEY",
                 "",
             );
             line(util::on_path("curl"), "curl", "");

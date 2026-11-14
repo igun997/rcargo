@@ -126,7 +126,7 @@ pub fn no_instances() -> SetupRequired {
                 .human()
                 .note("`instabox login` shows a page and a code the user opens in a browser.\nHeadless agent: run `instabox login --agent --name rcargo`, relay the printed claim URL and code to the user, and wait."),
             Step::new("Daytona sandbox")
-                .run("export DAYTONA_API_KEY=<key from https://app.daytona.io/dashboard/keys>")
+                .run("daytona login      # or: export DAYTONA_API_KEY=<key from https://app.daytona.io/dashboard/keys>")
                 .run("rcargo instances add dt --backend daytona --default --description \"Daytona sandbox\"")
                 .run("rcargo remote setup")
                 .human()
@@ -242,17 +242,19 @@ pub fn instabox_login() -> SetupRequired {
 
 pub fn daytona_key_missing() -> SetupRequired {
     SetupRequired {
-        problem: "DAYTONA_API_KEY is not set (needed by instances with backend = \"daytona\")".into(),
-        choose_one: false,
+        problem: "no Daytona login or API key found (needed by instances with backend = \"daytona\")".into(),
+        choose_one: true,
         steps: vec![
-            Step::new("Create an API key in the Daytona dashboard")
+            Step::new("Log in with the Daytona CLI (rcargo reuses that login)")
+                .run("brew install daytonaio/cli/daytona   # or see https://www.daytona.io/docs/en/tools/cli/")
+                .run("daytona login")
+                .human()
+                .note("opens a browser. Nothing else to configure: rcargo reads the CLI's stored login and refreshes it when it expires."),
+            Step::new("Use an API key instead")
                 .run("open https://app.daytona.io/dashboard/keys")
-                .human(),
-            Step::new("Export it where rcargo runs")
                 .run("export DAYTONA_API_KEY=<the key>")
                 .human()
-                .note("add it to your shell profile to persist. For MCP clients, set it in the rcargo server's `env` block, because clients do not inherit your interactive shell."),
-            Step::new("Optional: pick an organization").run("export DAYTONA_ORGANIZATION_ID=<id>").note("only if your key belongs to several organizations"),
+                .note("add it to your shell profile to persist. For MCP clients, set it in the rcargo server's `env` block, because clients do not inherit your interactive shell.\nIf the account has several organizations, also export DAYTONA_ORGANIZATION_ID=<id>."),
         ],
         then: Some("run `rcargo remote doctor`".into()),
     }
@@ -260,15 +262,15 @@ pub fn daytona_key_missing() -> SetupRequired {
 
 pub fn daytona_key_rejected(code: u16) -> SetupRequired {
     SetupRequired {
-        problem: format!("Daytona rejected the API key (HTTP {code})"),
-        choose_one: false,
+        problem: format!("Daytona rejected the credentials (HTTP {code})"),
+        choose_one: true,
         steps: vec![
-            Step::new("Create a fresh key and export it")
+            Step::new("Log in again").run("daytona login").human(),
+            Step::new("Or create a fresh API key")
                 .run("open https://app.daytona.io/dashboard/keys")
                 .run("export DAYTONA_API_KEY=<new key>")
-                .human(),
-            Step::new("If you use several organizations, set the right one")
-                .run("export DAYTONA_ORGANIZATION_ID=<id>"),
+                .human()
+                .note("with several organizations also export DAYTONA_ORGANIZATION_ID=<id>"),
         ],
         then: Some("retry the original command".into()),
     }
@@ -438,8 +440,8 @@ pub fn onboard(loaded: &Loaded, requested: Option<&str>, live: bool) -> Onboard 
             }
         }
         "daytona" => {
-            let key = std::env::var_os("DAYTONA_API_KEY").is_some();
-            push("DAYTONA_API_KEY set", key, "");
+            let key = crate::backend::daytona::have_credentials(&inst);
+            push("Daytona login or API key found", key, "");
             if !key {
                 return Onboard {
                     checks,

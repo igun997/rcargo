@@ -337,7 +337,7 @@ fn missing_setup_is_explained_to_humans_and_agents() {
     assert!(err.contains("SETUP REQUIRED"), "{err}");
     assert!(
         err.contains("instabox login")
-            && err.contains("DAYTONA_API_KEY")
+            && err.contains("daytona login")
             && err.contains("--backend ssh"),
         "{err}"
     );
@@ -373,7 +373,7 @@ fn missing_setup_is_explained_to_humans_and_agents() {
     let o = env.run(&["check"]);
     assert_eq!(o.status.code(), Some(3));
     assert!(
-        s(&o.stderr).contains("DAYTONA_API_KEY is not set"),
+        s(&o.stderr).contains("no Daytona login or API key found"),
         "{}",
         s(&o.stderr)
     );

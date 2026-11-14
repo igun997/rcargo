@@ -11,6 +11,36 @@ Rust compiles are heavy. On a laptop with 8 GB of RAM a single `cargo build` can
 - **Many machines.** Register several instances (a small default, a big one for release builds); agents are told which exist and what each is for.
 - **Tells you what to do when something is missing.** No instance, not logged in, no API key: you get exact numbered steps, marked when a human is needed.
 
+## Easiest: paste this into your AI agent
+
+Open your project in Claude Code, Codex, Cursor or any agent that can run shell commands, and paste the prompt below. The agent installs rcargo, wires itself up, walks you through anything it cannot do for you (logins, keys), and then proves it works.
+
+````text
+Set up rcargo in this project so that Rust builds and tests run on a remote machine instead of on this computer. rcargo is https://github.com/igun997/rcargo (read its README if you need details).
+
+Work through these steps in order. Whenever a step needs me (a browser login, an API key, choosing a provider, installing software), stop, tell me in plain words exactly what to do and which command or link to use, and wait for me to say it is done. Never invent or guess credentials, and never ask me to paste secrets into this chat.
+
+1. Check `rcargo --version`. If it is missing, install the prebuilt binary (nothing to compile):
+   curl -fsSL https://raw.githubusercontent.com/igun997/rcargo/main/install.sh | sh
+   If that fails, fall back to: CARGO_BUILD_JOBS=2 cargo install --git https://github.com/igun997/rcargo
+   Make sure the install folder (usually ~/.local/bin) is on PATH for this session.
+2. Go to the folder that contains this project's Cargo.toml and run `rcargo init`. It creates rcargo.toml, installs the agent skill, registers the MCP server, makes rust-analyzer check remotely, and installs a guard that blocks local cargo builds.
+3. Run `rcargo onboard --live`. If it prints SETUP REQUIRED, follow its steps: run the steps that are not marked [USER] yourself, and for [USER] steps ask me. If no remote machine is configured, ask me which I want and recommend instabox (easiest, has a free tier):
+   - instabox: `npx instabox@latest` (signs in and installs its CLI), then `rcargo instances add main --backend instabox --default --description "general purpose Rust builder"`
+   - Daytona: I run `daytona login` (or set DAYTONA_API_KEY), then `rcargo instances add dt --backend daytona --set cpu=4 --set memory=8 --set disk=10 --default --description "Daytona sandbox, 4 vCPU"` (Daytona's default sandbox is only 1 vCPU / 1 GB, too small for Rust; lower the numbers if my plan's quota is smaller)
+   - my own server: `rcargo instances add vps --backend ssh --set host=USER@SERVER --default --description "my build server"` (key-based ssh must already work)
+   If I already have several machines, run `rcargo instances discover`, and register each one with a description that says what it is good for (for example "32 cores, use for release builds").
+4. Run `rcargo remote doctor`, then `rcargo test` (or `rcargo check` if there are no tests) and show me the result. The first build on a new machine installs the Rust toolchain there, which takes a few minutes.
+5. From now on never run cargo build, check, test, clippy, run, bench or install on this computer. Use `rcargo <the same arguments>` instead, or the `cargo` tool of the rcargo MCP server. Read .claude/skills/rcargo/SKILL.md (or .agents/skills/rcargo/SKILL.md) now and follow it, including how to choose between instances.
+6. Tell me in plain English what you set up, which instance is the default, that I may need to restart this agent so it loads the new MCP server and skill, and that `rcargo remote down` pauses the remote machine to save money (it wakes up by itself on the next build).
+````
+
+Already set up and just want to add another machine later? Paste this instead:
+
+````text
+Add another remote build machine to rcargo. Run `rcargo instances` to see what exists, ask me which provider I want (instabox, Daytona, or my own SSH server), do the steps that do not need me, and ask me for the ones that do (logins, keys). Register it with `rcargo instances add NAME --backend ... --description "what this machine is good for"`, then verify with `rcargo -i NAME check` and tell me how to use it (`rcargo -i NAME build --release`).
+````
+
 ## Quick start (3 steps)
 
 ```sh
@@ -67,8 +97,10 @@ Choice order: `-i` / `RCARGO_INSTANCE`, then `instance = "NAME"` in the project'
 | Backend | What it needs | Notes |
 |---|---|---|
 | `instabox` | the `instabox` CLI, signed in | box is created on first use (`--set box=NAME`, `vcpus`/`mem_mib` on paid plans). Free plan: one box, so all projects share it. Verified end to end. |
-| `daytona` | `DAYTONA_API_KEY` (+ `curl`) | uses the REST API and Daytona's SSH gateway. **Not yet verified against a live account**; please report issues. |
+| `daytona` | `daytona login` (rcargo reuses the CLI's stored login) or `DAYTONA_API_KEY`; `curl` | uses the REST API and Daytona's SSH gateway; the sandbox is created on first use and the Rust toolchain is installed automatically. Verified end to end (create, toolchain bootstrap, sync, test). |
 | `ssh` | key-based ssh to `host` | your own VPS or desktop. Linux with `bash`, `tar`, `find`, `flock`. |
+
+Daytona's default sandbox is 1 vCPU / 1 GB RAM / 3 GB disk, which is too small for most Rust builds. Size it when you register it (applies when the sandbox is created): `rcargo instances add dt --backend daytona --set cpu=4 --set memory=8 --set disk=10` (`memory` and `disk` are GB; stay within your plan's quota). instabox's default box is 4 vCPU / 8 GiB.
 
 Instance settings live in `~/.config/rcargo/config.toml` (`$RCARGO_CONFIG`), project settings in `rcargo.toml`.
 
