@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: unit + end-to-end tests
+        # The e2e suite runs the real binary against a fake ssh and needs GNU userland (Linux).
+        run: cargo test --all-targets
+      - name: MCP smoke test
+        run: |
+          cargo build --release
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+            | ./target/release/rcargo mcp | tee /tmp/mcp.out
+          grep -q '"name":"cargo"' /tmp/mcp.out
+          grep -q '"name":"setup"' /tmp/mcp.out
+      - name: Guidance smoke test (no setup => exit 3 with steps)
+        run: |
+          mkdir -p /tmp/proj/src && cd /tmp/proj
+          printf '[package]\nname="p"\nversion="0.1.0"\nedition="2021"\n' > Cargo.toml
+          echo 'fn main(){}' > src/main.rs
+          set +e
+          RCARGO_CONFIG=/tmp/none.toml PATH=/usr/bin:/bin "$GITHUB_WORKSPACE/target/release/rcargo" test 2> /tmp/err.txt
+          code=$?
+          set -e
+          cat /tmp/err.txt
+          test "$code" = 3
+          grep -q "SETUP REQUIRED" /tmp/err.txt
