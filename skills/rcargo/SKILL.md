@@ -21,6 +21,8 @@ Prefer the MCP server (`rcargo mcp`) when its tools are available:
 | `power` | `up` / `down` an instance |
 | `workspaces` | disk usage per project on an instance |
 
+Porting code from another language, or starting a Rust project in an empty folder? Use the `rust-port` skill (`rcargo port start` looks at the folder and tells you which questions to ask the user).
+
 Without MCP, use the CLI: `rcargo test`, `rcargo check --workspace`, `rcargo clippy -- -D warnings`, `rcargo -i NAME build --release`. Anything that is not an rcargo command is passed to cargo and run remotely. Add `--pull` (before the subcommand) to copy built executables back to `./target`.
 
 ## Several instances

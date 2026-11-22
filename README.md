@@ -10,6 +10,7 @@ Rust compiles are heavy. On a laptop with 8 GB of RAM a single `cargo build` can
 - **You don't need Rust installed locally.** The first build on a fresh machine installs the toolchain there.
 - **Many machines.** Register several instances (a small default, a big one for release builds); agents are told which exist and what each is for.
 - **Tells you what to do when something is missing.** No instance, not logged in, no API key: you get exact numbered steps, marked when a human is needed.
+- **Move the slow part of any program to Rust.** `rcargo port` takes a hot function from Python, Node, Ruby or PHP (or anything that can speak JSON), has an agent port only that, proves it gives the same answers on real recorded calls, and swaps it in. Heavy builds run remotely like everything else. See [Port code to Rust](#port-code-to-rust).
 
 ## Easiest: paste this into your AI agent
 
@@ -27,7 +28,7 @@ Work through these steps in order. Whenever a step needs me (a browser login, an
 2. Go to the folder that contains this project's Cargo.toml and run `rcargo init`. It creates rcargo.toml, installs the agent skill, registers the MCP server, makes rust-analyzer check remotely, and installs a guard that blocks local cargo builds.
 3. Run `rcargo onboard --live`. If it prints SETUP REQUIRED, follow its steps: run the steps that are not marked [USER] yourself, and for [USER] steps ask me. If no remote machine is configured, ask me which I want and recommend instabox (easiest, has a free tier):
    - instabox: `npx instabox@latest` (signs in and installs its CLI), then `rcargo instances add main --backend instabox --default --description "general purpose Rust builder"`. If I prefer an API key (no CLI needed), I create one in the instabox dashboard and set INSTABOX_API_KEY.
-   - Daytona: I run `daytona login` (or set DAYTONA_API_KEY), then `rcargo instances add dt --backend daytona --set cpu=4 --set memory=8 --set disk=10 --default --description "Daytona sandbox, 4 vCPU"` (Daytona's default sandbox is only 1 vCPU / 1 GB, too small for Rust; lower the numbers if my plan's quota is smaller)
+   - Daytona: I run `daytona login` (or set DAYTONA_API_KEY), then `rcargo instances add dt --backend daytona --set snapshot=daytona-large --default --description "Daytona sandbox, 4 vCPU / 8 GB"` (Daytona's default sandbox is only 1 vCPU / 1 GB, too small for Rust; `daytona snapshot list` shows the sizes available to me, use daytona-medium if my quota is smaller)
    - my own server: `rcargo instances add vps --backend ssh --set host=USER@SERVER --default --description "my build server"` (key-based ssh must already work)
    If I already have several machines, run `rcargo instances discover`, and register each one with a description that says what it is good for (for example "32 cores, use for release builds").
 4. Run `rcargo remote doctor`, then `rcargo test` (or `rcargo check` if there are no tests) and show me the result. The first build on a new machine installs the Rust toolchain there, which takes a few minutes.
@@ -39,6 +40,12 @@ Already set up and just want to add another machine later? Paste this instead:
 
 ````text
 Add another remote build machine to rcargo. Run `rcargo instances` to see what exists, ask me which provider I want (instabox, Daytona, or my own SSH server), do the steps that do not need me, and ask me for the ones that do (logins, keys). Register it with `rcargo instances add NAME --backend ... --description "what this machine is good for"`, then verify with `rcargo -i NAME check` and tell me how to use it (`rcargo -i NAME build --release`).
+````
+
+Want to write something in Rust, or speed up an existing Python/Node/Ruby/PHP project? Paste this (after rcargo is set up):
+
+````text
+I want to use Rust, either for a new project or to speed up code I already have. Install rcargo if `rcargo --version` is missing (curl -fsSL https://raw.githubusercontent.com/igun997/rcargo/main/install.sh | sh), then run `rcargo init` if this is a Rust project, or `rcargo port start --json` in this folder. That command inspects the folder (empty, Rust, or code in another language) and returns questions. Ask me those questions in plain words and wait for my answers: do not decide for me whether this is a new project or a port, and never overwrite my files. Then follow the rust-port skill (.claude/skills/rust-port/SKILL.md or .agents/skills/rust-port/SKILL.md; `rcargo port init` installs it). Run every build and test through rcargo, never locally. Finish by telling me what was built, how many real recorded calls matched, and the measured speedup.
 ````
 
 ## Quick start (3 steps)
@@ -80,6 +87,35 @@ rcargo +nightly build
 rcargo --pull build --release      # copy the built executable back into ./target
 ```
 
+## Port code to Rust
+
+Rewriting a whole app in Rust costs months. Most of the runtime sits in a few functions. `rcargo port` moves only those, keeps your app, and refuses to call a port correct until it matches the original on real data. The approach (port only the hot 5%, prove it on recorded calls, keep the original as fallback) is adopted from [fast-anything](https://github.com/EL4CTEO/fast-anything) by EL4CTEO, MIT licensed; see [Credits](#credits). What rcargo adds: every build and test runs on your remote machine, and the same flow works with an AI agent through the `rust-port` skill and the `port` MCP tool.
+
+```sh
+rcargo port start              # looks at this folder, then asks what you want (see below)
+rcargo port init fuzzy --module app/fuzzy.py --function dedupe
+rcargo port record fuzzy -- python app.py     # keeps up to 500 real calls (golden cases)
+rcargo port expand fuzzy       # edge cases (empty, huge, unicode, negative...), answered by YOUR code
+# implement ports/fuzzy/src/port.rs (an agent does this from ports/fuzzy/TASK.md)
+rcargo port verify fuzzy       # remote build + replay every case; repeat until all match
+rcargo port build fuzzy        # remote release build, binary copied to ports/fuzzy/target/release
+rcargo port bench fuzzy        # original vs port, end to end, bridge included
+```
+
+`rcargo port start` never assumes. An **empty folder** (apart from README/LICENSE) offers a new Rust project or porting code from another folder. A **Rust project** offers remote-build setup or porting into it. A folder with **existing code** is inspected first: languages, file counts, the biggest files as likely suspects, the command to profile it. Then it asks whether to port the slow functions (recommended), start a separate rewrite in a sub-folder, or do nothing yet. It never overwrites files. In a terminal it asks interactively; an AI agent gets the same questions as JSON (`rcargo port start --json`, or the `port` MCP tool) and must put them to you.
+
+| Language | Recorder and bridge | Notes |
+|---|---|---|
+| Python 3.8+ | ready-made shim (`@rcargo_port.port`) | standard library only |
+| Node 18+ / TypeScript | ready-made shim (`port(fn)`) | Linux and macOS (synchronous bridge over FIFOs) |
+| Ruby 3.0+ | ready-made shim (`RcargoPort.wrap`) | |
+| PHP 8.0+ | ready-made shim (`RcargoPort::call`) | |
+| Go, Java, C#, C/C++, anything | `--lang other` | same Rust crate, JSON-lines protocol and C ABI are generated; you add the few-line recorder (`TASK.md` explains) |
+
+How the proof works: `golden/cases.jsonl` holds real calls plus derived edge cases, each with the answer the original gave. `verify` replays all of them against the Rust port (numbers equal within 1e-9; an error case needs an error). The port is called through one long-lived process speaking JSON lines, so there are no language headers or bindings to install. If the binary is missing, arguments are not plain data, or the port reports a fatal problem, the shim falls back to the original. `RCARGO_PORT_DISABLE=1` switches it off, and removing the one wrapper line undoes the edit.
+
+Limits: port pure, deterministic functions on plain data (numbers, strings, lists, maps). Tuples come back as lists. Integers beyond 2^53 lose precision in Node. `bench` can show that a port is *slower* end to end (tiny work, called too often); then do not enable it, port the outer loop. `rcargo port crates requests` tells you which crate replaces a library. `rcargo port status` lists ports.
+
 ## Instances (several machines)
 
 ```sh
@@ -94,6 +130,8 @@ rcargo -i big build --release                      # pick per command (or RCARGO
 
 Choice order: `-i` / `RCARGO_INSTANCE`, then `instance = "NAME"` in the project's `rcargo.toml`, then your default, then the only instance. With several instances and no default, rcargo asks you (or the agent) to choose instead of guessing.
 
+**Reusing a machine you already have.** A name that already exists at the provider is used as is (nothing is created): `rcargo instances add mine --backend instabox --set box=EXISTING` or `--backend daytona --set name=EXISTING`. Several instances may point at one box; each project still gets its own workspace on it. `rcargo instances discover` lists what your accounts already have, and when a machine rcargo would create does not exist yet, it prints the ones you could reuse instead.
+
 | Backend | What it needs | Notes |
 |---|---|---|
 | `instabox` | `INSTABOX_API_KEY` (REST API, **no CLI needed**) or the `instabox` CLI, signed in | box is created on first use (`--set box=NAME`, `vcpus`/`mem_mib` on paid plans). Free plan: one box, so all projects share it. Verified end to end in both modes (create, destroy, build, test). |
@@ -102,7 +140,7 @@ Choice order: `-i` / `RCARGO_INSTANCE`, then `instance = "NAME"` in the project'
 
 **Credential order.** If an API key is in the environment (`INSTABOX_API_KEY`, `DAYTONA_API_KEY`) rcargo uses it and talks to the provider's REST API directly, so the provider CLI does not even need to be installed. Otherwise it falls back to the CLI's stored login (`instabox login`, `daytona login`). For MCP clients, put the key in the rcargo server's `env` block, because clients do not inherit your shell. Keys are sent to `curl` on stdin, never on a command line.
 
-Daytona's default sandbox is 1 vCPU / 1 GB RAM / 3 GB disk, which is too small for most Rust builds. Size it when you register it (applies when the sandbox is created): `rcargo instances add dt --backend daytona --set cpu=4 --set memory=8 --set disk=10` (`memory` and `disk` are GB; stay within your plan's quota). instabox's default box is 4 vCPU / 8 GiB.
+Daytona's default sandbox is 1 vCPU / 1 GB RAM / 3 GB disk, which is too small for most Rust builds. Daytona sizes a sandbox through its snapshot and rejects `cpu`/`memory`/`disk` next to one (its API answers "Cannot specify Sandbox resources when using a snapshot"), so pick a bigger snapshot when you register the instance (applies when the sandbox is created): `rcargo instances add dt --backend daytona --set snapshot=daytona-large` (4 vCPU / 8 GB / 10 GB on the account this was checked with; `daytona snapshot list` shows yours). instabox's default box is 4 vCPU / 8 GiB.
 
 Instance settings live in `~/.config/rcargo/config.toml` (`$RCARGO_CONFIG`), project settings in `rcargo.toml`.
 
@@ -167,3 +205,7 @@ cargo test        # unit tests + end-to-end suite (real binary, fake ssh)
 ```
 
 MIT licensed.
+
+## Credits
+
+`rcargo port` adopts the workflow of **[fast-anything](https://github.com/EL4CTEO/fast-anything)** by EL4CTEO (MIT): profile, port only the hot function, replay real recorded calls plus derived edge cases against the port, enable only when everything matches, keep the original as the fallback. Thank you. This is an independent implementation (a JSON-lines bridge generated per port, shims in the host language, builds on rcargo's remote machines); fast-anything's own tool does more (automatic profiling, native bindings such as PyO3 and napi-rs, more languages) and is worth using on its own. Its license notice is kept in [NOTICE](NOTICE). rcargo is MIT licensed too, so the two are compatible.

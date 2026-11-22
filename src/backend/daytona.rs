@@ -224,10 +224,18 @@ impl Daytona {
         }
         let (code, v) = self.call("POST", "/sandbox", Some(&b))?;
         if !(200..300).contains(&code) {
-            bail!(
-                "daytona create failed (HTTP {code}): {}",
-                v["message"].as_str().unwrap_or("")
-            );
+            let msg = v["message"].as_str().unwrap_or("");
+            if msg.contains("resources") && msg.contains("snapshot") {
+                bail!(
+                    "daytona create failed (HTTP {code}): {msg}\n\
+                     Daytona applies a snapshot to every new sandbox and does not accept cpu/memory/disk next to it. \
+                     Size the sandbox with a snapshot instead: remove cpu/memory/disk from this instance and set \
+                     `snapshot` to daytona-small, daytona-medium or daytona-large (`daytona snapshot list` shows yours), \
+                     e.g. rcargo instances add NAME --backend daytona --set name={} --set snapshot=daytona-large",
+                    self.sb
+                );
+            }
+            bail!("daytona create failed (HTTP {code}): {msg}");
         }
         Ok(())
     }
@@ -336,6 +344,21 @@ impl Backend for Daytona {
         let mut v = match self.get()? {
             Some(v) => v,
             None => {
+                let others: Vec<String> = list_sandboxes()
+                    .map(|s| {
+                        s.into_iter()
+                            .map(|(n, st)| format!("{n} ({st})"))
+                            .filter(|n| !n.starts_with(&format!("{} (", self.sb)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !others.is_empty() {
+                    info!(
+                        "sandbox `{}` does not exist, but you already have: {}. To reuse one instead: rcargo instances add NAME --backend daytona --set name=<existing>",
+                        self.sb,
+                        others.join(", ")
+                    );
+                }
                 self.create()?;
                 self.get()?
                     .context("sandbox vanished right after creation")?

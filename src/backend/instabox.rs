@@ -167,6 +167,18 @@ impl Instabox {
         }
     }
 
+    /// Names of the account's other boxes, so a first use can suggest reusing one.
+    fn other_boxes(&self) -> Vec<String> {
+        list_boxes()
+            .map(|b| {
+                b.into_iter()
+                    .map(|(n, _, _)| n)
+                    .filter(|n| *n != self.box_name)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn get(&self) -> Result<Option<Value>> {
         if let Some(api) = &self.api {
             let (code, v) =
@@ -422,7 +434,24 @@ impl Backend for Instabox {
         let mut v = match self.get()? {
             Some(v) => v,
             None => {
-                self.create()?;
+                let others = self.other_boxes();
+                if !others.is_empty() {
+                    info!(
+                        "box `{}` does not exist, but you already have: {}. To reuse one instead: rcargo instances add NAME --backend instabox --set box=<existing>",
+                        self.box_name,
+                        others.join(", ")
+                    );
+                }
+                if others.is_empty() {
+                    self.create()?;
+                } else {
+                    self.create().with_context(|| {
+                        format!(
+                            "existing boxes you could reuse: {} (rcargo instances add NAME --backend instabox --set box=<existing>)",
+                            others.join(", ")
+                        )
+                    })?;
+                }
                 self.get_wait(90)?
             }
         };

@@ -1,0 +1,119 @@
+# language	from	rust equivalent	note
+any	json	serde_json	serde (derive) turns structs into JSON and back
+any	yaml	serde_yaml	maintained fork: serde_yml; or keep config in toml
+any	toml	toml	
+any	csv	csv	
+any	regex	regex	no lookaround/backreferences; use fancy-regex when the original needs them
+any	command line arguments	clap	derive API
+any	http client	reqwest	async by default; reqwest::blocking for simple scripts
+any	http server	axum	on tokio; actix-web is the other mainstream choice
+any	async runtime	tokio	
+any	logging	tracing	tracing-subscriber prints it
+any	dates and times	chrono	the time crate is the lighter alternative
+any	random numbers	rand	
+any	uuid	uuid	
+any	sha256 md5 hashing	sha2	md-5, blake3 for the others
+any	base64	base64	
+any	gzip zlib compression	flate2	
+any	progress bar	indicatif	
+any	terminal colors	owo-colors	colored is similar
+any	terminal ui	ratatui	
+any	sqlite	rusqlite	
+any	sql database async	sqlx	postgres, mysql, sqlite; diesel and sea-orm are ORMs
+any	redis	redis	
+any	templates	minijinja	tera is the other Jinja-like engine
+any	html parsing	scraper	CSS selectors
+any	xml	quick-xml	roxmltree for read-only trees
+any	markdown	pulldown-cmark	
+any	file watching	notify	
+any	glob walking directories	walkdir	globset for patterns, ignore for gitignore-aware walks
+any	parallel loops	rayon	par_iter replaces multiprocessing and worker pools
+any	error handling	anyhow	thiserror for library error types
+any	property testing	proptest	
+any	benchmarks	criterion	
+any	string similarity levenshtein	strsim	levenshtein, jaro_winkler, damerau_levenshtein
+any	jwt	jsonwebtoken	
+any	password hashing	argon2	bcrypt crate for bcrypt
+any	tls crypto	rustls	ring or the RustCrypto crates for primitives
+any	image processing	image	fast_image_resize for resizing
+any	email	lettre	
+python	numpy	ndarray	nalgebra for linear algebra
+python	pandas	polars	
+python	scipy stats	statrs	
+python	pydantic	serde	add the validator crate for field rules
+python	flask fastapi	axum	
+python	requests httpx	reqwest	blocking API: reqwest::blocking
+python	sqlalchemy	sqlx	sea-orm or diesel for an ORM
+python	asyncio	tokio	
+python	multiprocessing threading	rayon	std::thread and crossbeam for explicit threads
+python	pytest	built-in #[test]	rstest for fixtures and parametrised cases
+python	pathlib os.path	std::path	std::fs; camino for UTF-8 paths
+python	collections.Counter	std HashMap	entry().or_insert(0); itertools for grouping
+python	dataclasses	struct with derive	#[derive(Debug, Clone, PartialEq)]
+python	PyO3	pyo3	maturin builds the extension; this tool uses a JSON bridge instead so no Python headers are needed
+node	express	axum	
+node	axios node-fetch	reqwest	
+node	lodash	std iterators	itertools for group_by, chunks and friends
+node	zod	serde	add the validator crate for field rules
+node	commander yargs	clap	
+node	chalk	owo-colors	
+node	dotenv	dotenvy	
+node	jest vitest	built-in #[test]	
+node	prisma	sea-orm	sqlx for plain SQL
+node	moment dayjs	chrono	
+node	sharp	image	
+node	cheerio	scraper	
+node	handlebars	handlebars	
+node	ws	tokio-tungstenite	
+node	EventEmitter	tokio::sync::broadcast	
+node	napi-rs	napi	direct Node addon; this tool uses a JSON bridge instead
+ruby	rails	axum	loco is a Rails-like framework on top of axum
+ruby	sinatra	axum	
+ruby	rspec minitest	built-in #[test]	
+ruby	nokogiri	scraper	
+ruby	faraday httparty	reqwest	
+ruby	activerecord	sea-orm	diesel is the other option
+ruby	thor optparse	clap	
+ruby	erb	askama	compile-time templates; tera for runtime ones
+ruby	sidekiq	apalis	
+php	laravel symfony	axum	loco for a batteries-included framework
+php	guzzle	reqwest	
+php	twig blade	minijinja	
+php	monolog	tracing	
+php	phpunit	built-in #[test]	
+php	doctrine eloquent	sea-orm	
+php	carbon	chrono	
+go	net/http gin echo	axum	
+go	goroutines channels	tokio	tokio::sync::mpsc, JoinSet; crossbeam-channel for threads
+go	cobra	clap	
+go	gorm	sea-orm	
+go	encoding/json	serde_json	
+go	zap logrus	tracing	
+go	viper	config	
+go	context cancellation	tokio-util	CancellationToken
+java	spring boot	axum	actix-web is the other mainstream choice
+java	jackson gson	serde_json	
+java	junit	built-in #[test]	mockall for Mockito-style mocks
+java	hibernate jpa	sea-orm	diesel is the other option
+java	streams	std iterators	
+java	CompletableFuture	async/await on tokio	
+java	slf4j log4j	tracing	
+java	guava apache commons	itertools	std covers most of the rest
+csharp	asp.net core	axum	
+csharp	system.text.json newtonsoft	serde_json	
+csharp	linq	std iterators	itertools for the rest
+csharp	entity framework	sea-orm	
+csharp	xunit nunit	built-in #[test]	
+csharp	task async await	tokio	
+csharp	serilog	tracing	
+c++	nlohmann json	serde_json	
+c++	boost asio	tokio	
+c++	cli11	clap	
+c++	eigen	nalgebra	ndarray for numpy-like arrays
+c++	zlib	flate2	
+c++	libcurl	reqwest	curl crate for a thin libcurl binding
+c++	sqlite3	rusqlite	
+c++	libpng	image	
+c++	gtest	built-in #[test]	
+c++	std::thread	std::thread	rayon for data parallelism
+c++	spdlog fmt	tracing	format! covers fmt

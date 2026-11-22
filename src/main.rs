@@ -7,6 +7,7 @@ mod guidance;
 mod http;
 mod init;
 mod mcp;
+mod port;
 mod project;
 mod run;
 mod summary;
@@ -76,6 +77,11 @@ enum Cmd {
     /// Claude Code PreToolUse hook: blocks local cargo build/test and points to rcargo (reads JSON on stdin).
     #[command(hide = true)]
     Hook,
+    /// Port the slow part of a Python/Node/Ruby/PHP (or any) program to Rust and prove it behaves the same. Start with `rcargo port start`.
+    Port {
+        #[command(subcommand)]
+        action: Option<port::PortCmd>,
+    },
     #[command(external_subcommand)]
     Cargo(Vec<String>),
 }
@@ -197,6 +203,13 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(if rep.ready() { 0 } else { 3 })
         }
         Some(Cmd::Hook) => init::hook(),
+        Some(Cmd::Port { action }) => port::run(
+            inst.as_deref(),
+            action.unwrap_or(port::PortCmd::Start {
+                dir: None,
+                json: false,
+            }),
+        ),
         Some(Cmd::Mcp) => {
             util::set_quiet(true);
             mcp::serve(inst)?;

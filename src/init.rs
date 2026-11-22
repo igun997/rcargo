@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::{config, guidance, project};
 
 const SKILL_MD: &str = include_str!("../skills/rcargo/SKILL.md");
+const SKILL_PORT_MD: &str = include_str!("../skills/rust-port/SKILL.md");
 
 const PROJECT_TOML: &str = r#"# rcargo project settings. Remote machines ("instances") are configured per user:
 #   rcargo instances            # list them
@@ -98,15 +99,26 @@ pub fn integrate(a: IntegrateArgs) -> Result<i32> {
     Ok(0)
 }
 
+/// The `rcargo` and `rust-port` agent skills, for Claude Code (.claude) and other agents (.agents).
+pub fn install_skills(base: &Path) -> Result<Vec<PathBuf>> {
+    let mut written = vec![];
+    for (name, body) in [("rcargo", SKILL_MD), ("rust-port", SKILL_PORT_MD)] {
+        for root in [".claude/skills", ".agents/skills"] {
+            let dir = base.join(root).join(name);
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join("SKILL.md"), body)?;
+            written.push(dir.join("SKILL.md"));
+        }
+    }
+    Ok(written)
+}
+
 fn integrate_in(base: &Path, a: &IntegrateArgs) -> Result<()> {
     let everything = a.all || !(a.skill || a.mcp || a.vscode || a.guard);
     let global = a.global;
     if everything || a.skill {
-        for d in [".claude/skills/rcargo", ".agents/skills/rcargo"] {
-            let dir = base.join(d);
-            std::fs::create_dir_all(&dir)?;
-            std::fs::write(dir.join("SKILL.md"), SKILL_MD)?;
-            println!("  + agent skill: {}", dir.join("SKILL.md").display());
+        for p in install_skills(base)? {
+            println!("  + agent skill: {}", p.display());
         }
     }
     if global {

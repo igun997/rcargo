@@ -1,0 +1,20 @@
+[package]
+name = "{{BIN}}"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of `{{FUNCTION}}` ({{LANG}}), made with rcargo port"
+publish = false
+
+[lib]
+name = "rcport"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# Standalone crate: never part of a parent workspace.
+[workspace]

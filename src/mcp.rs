@@ -162,6 +162,20 @@ fn tools() -> Vec<Value> {
             "description": "List the project workspaces stored on an instance with their disk usage.",
             "inputSchema": {"type":"object","properties":{"instance": inst}}
         }),
+        json!({
+            "name": "port",
+            "description": "Port the slow part of a Python/Node/Ruby/PHP (or other) program to Rust, or start a Rust project, with proof against real recorded calls. Builds run remotely. ALWAYS begin with action `start` on the folder and put the returned `ask_user` questions to the human before doing anything (never assume 'new project' vs 'port' in a non-empty folder). Actions: start (inspect folder, returns questions), init (scaffold ports/NAME; needs name, plus module+function or lang), expand (edge cases answered by the original; needs recorded cases), status, crates (query: which Rust crate replaces a library), verify (remote build + replay all cases), build (remote release build, binary copied back). Recording real calls (`rcargo port record`) and `bench` run your app locally: use the CLI. Read the rust-port skill.",
+            "inputSchema": {"type":"object","required":["action"],"properties":{
+                "action": {"type":"string","enum":["start","init","expand","status","crates","verify","build"]},
+                "name": {"type":"string","description":"Port name (lowercase letters, digits, - or _)."},
+                "lang": {"type":"string","enum":["python","node","ruby","php","other"]},
+                "module": {"type":"string","description":"Source file holding the function, relative to project_dir."},
+                "function": {"type":"string","description":"Function to port (`name` or `Class.method`)."},
+                "query": {"type":"string","description":"For crates: library or topic, e.g. `requests` or `http client`."},
+                "limit": {"type":"integer","description":"For expand: maximum derived cases (default 300)."},
+                "instance": inst, "project_dir": project_dir, "max_output_chars": max
+            }}
+        }),
     ]
 }
 
@@ -194,6 +208,7 @@ fn call_tool(params: &Value, def: &Option<String>) -> Value {
         "setup" => tool_setup(args, def),
         "power" => tool_power(args, def),
         "workspaces" => tool_workspaces(args, def),
+        "port" => tool_port(args, def),
         other => Err(anyhow::anyhow!("unknown tool `{other}`")),
     };
     let out = match r {
@@ -330,6 +345,64 @@ fn tool_shell(args: &Value, def: &Option<String>) -> Result<Out> {
         error: res.code != 0,
         structured: None,
     })
+}
+
+fn tool_port(args: &Value, def: &Option<String>) -> Result<Out> {
+    use crate::port;
+    let dir = project_dir(args)?;
+    let s = |k: &str| args[k].as_str();
+    let name = || s("name").context("`name` is required for this action");
+    let action = args["action"].as_str().unwrap_or("");
+    match action {
+        "start" => {
+            let sv = port::survey(&dir)?;
+            Ok(Out {
+                text: sv.agent_text(),
+                error: false,
+                structured: Some(sv.to_json()),
+            })
+        }
+        "init" => {
+            let (_, text) = port::init_port(
+                &dir,
+                name()?,
+                s("lang"),
+                s("module").map(std::path::Path::new),
+                s("function"),
+            )?;
+            Ok(Out::ok(text))
+        }
+        "expand" => {
+            let limit = args["limit"].as_u64().unwrap_or(300).clamp(1, 5000) as usize;
+            let (code, text) = port::expand(&dir, name()?, limit)?;
+            Ok(Out {
+                text,
+                error: code != 0,
+                structured: None,
+            })
+        }
+        "status" => Ok(Out::ok(port::status(&dir, s("name"))?)),
+        "crates" => Ok(Out::ok(port::crates(s("query").unwrap_or(""), s("lang")))),
+        "verify" | "build" => {
+            let p = port::find_port(&dir, name()?)?;
+            let cargo_args = if action == "verify" {
+                port::verify_args()
+            } else {
+                port::build_args(&p.bin())
+            };
+            tool_cargo(
+                &json!({
+                    "args": cargo_args,
+                    "project_dir": p.dir,
+                    "instance": args["instance"],
+                    "pull": action == "build",
+                    "max_output_chars": args["max_output_chars"],
+                }),
+                def,
+            )
+        }
+        other => bail!("unknown port action `{other}`; use start, init, expand, status, crates, verify or build"),
+    }
 }
 
 fn tool_sync(args: &Value, def: &Option<String>) -> Result<Out> {
@@ -479,6 +552,7 @@ mod tests {
             "setup",
             "power",
             "workspaces",
+            "port",
         ] {
             assert!(names.contains(&n), "missing tool {n}");
         }
@@ -486,6 +560,57 @@ mod tests {
             assert_eq!(t["inputSchema"]["type"], "object");
             assert!(t["description"].as_str().unwrap().len() > 20);
         }
+    }
+
+    fn call(name: &str, args: Value) -> Value {
+        handle(
+            &req("tools/call", json!({"name": name, "arguments": args})),
+            &None,
+        )
+        .unwrap()["result"]
+            .clone()
+    }
+
+    #[test]
+    fn port_tool_inspects_and_asks_before_acting() {
+        let dir = std::env::temp_dir().join(format!("rcargo-mcp-port-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = dir.to_string_lossy().to_string();
+
+        let empty = call("port", json!({"action": "start", "project_dir": d}));
+        assert_eq!(empty["isError"], false);
+        assert_eq!(empty["structuredContent"]["kind"], "empty");
+        assert!(empty["structuredContent"]["ask_user"][0]["options"]
+            .as_array()
+            .is_some_and(|o| o.len() == 2));
+        assert!(empty["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("ASK THE USER"));
+
+        std::fs::write(dir.join("m.py"), "def f(a):\n    return a\n").unwrap();
+        let existing = call("port", json!({"action": "start", "project_dir": d}));
+        assert_eq!(existing["structuredContent"]["kind"], "foreign");
+        assert_eq!(existing["structuredContent"]["candidate_files"][0], "m.py");
+
+        let init = call(
+            "port",
+            json!({"action": "init", "project_dir": d, "name": "f", "module": "m.py", "function": "f"}),
+        );
+        assert_eq!(init["isError"], false, "{init}");
+        assert!(dir.join("ports/f/shims/rcargo_port.py").is_file());
+
+        let missing = call("port", json!({"action": "init", "project_dir": d}));
+        assert_eq!(missing["isError"], true);
+        let crates = call(
+            "port",
+            json!({"action": "crates", "query": "pandas", "lang": "python"}),
+        );
+        assert!(crates["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("polars"));
     }
 
     #[test]
